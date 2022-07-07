@@ -3,6 +3,7 @@ enum class ClassTypeID : int
 {
 	NoMessage,
 	StringMessage,
-	File,
+	FileSend,
+	FileGet,
 	UnorderedMap
 };

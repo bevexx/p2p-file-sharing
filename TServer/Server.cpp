@@ -174,18 +174,20 @@ Server::Server(char argc, char **argv)
 					else if (data.find("1337_writingfile_") != std::string::npos)
 					{
 						int pos = data.find("1337_writingfile_");
-						myFileName = data.substr(17, data.size() - 17);
-						myFile.open(myFileName, std::fstream::out | std::fstream::binary);
+						myFile.myFileName = data.substr(17, data.size() - 17);
+						myFile.Open(myFile.myFileName, std::fstream::out | std::fstream::binary);
 
-						if (!myFile.is_open())
+						if (!myFile.IsOpen())
 						{
 							std::cout << "server ignored file write";
 							continue;
 						}
 
-						myTotalFileSize = newMessage.mySize;
-						myFile.flush();
-						myFileBuf = myFile.rdbuf();
+						myFile.Init(newMessage.mySize);
+						myFile.Flush();
+
+						myFile.myFileIsFrom.first = myUsers.at(newMessage.myID);
+						myFile.myFileIsFrom.second = newMessage.myID;
 
 						int iSendResult = SOCKET_ERROR;
 						while (iSendResult == SOCKET_ERROR)
@@ -196,6 +198,49 @@ Server::Server(char argc, char **argv)
 					else if (data == "1337_finished")
 					{
 						WriteToFile();
+					}
+					else if (data.find("client_writingfile_") != std::string::npos)
+					{
+						if (!myFile.IsOpen())
+						{
+							continue;
+						}
+
+						CNetMessageFile newFileFragment;
+						newFileFragment.myClassTypeID = ClassTypeID::FileSend;
+
+						int currentSize = min(myFile.GetTotalFileSize() - FILE_BUFLEN * myFile.GetPacketIndex(), FILE_BUFLEN);
+						myFile.Read(newFileFragment.myMessage, currentSize);
+
+						newFileFragment.myPosition = myFile.IncrementIndex();
+						newFileFragment.mySize = currentSize;
+
+						memcpy(netBufIn, &newFileFragment, DEFAULT_BUFLEN);
+						sendto(myClientSocket, netBufIn, DEFAULT_BUFLEN, 0, (SOCKADDR *)&senderAddr, senderAddrSize);
+					}
+					else if (data == "client_confirm")
+					{
+						if (!myFile.IsOpen())
+						{
+							continue;
+						}
+
+						CNetMessageFile newFileFragment;
+						newFileFragment.myClassTypeID = ClassTypeID::FileSend;
+
+						int currentSize = min(myFile.GetTotalFileSize() - FILE_BUFLEN * myFile.GetPacketIndex(), FILE_BUFLEN);
+						myFile.Read(newFileFragment.myMessage, currentSize);
+
+						newFileFragment.myPosition = myFile.IncrementIndex();
+						newFileFragment.mySize = currentSize;
+
+						memcpy(netBufIn, &newFileFragment, DEFAULT_BUFLEN);
+						sendto(myClientSocket, netBufIn, DEFAULT_BUFLEN, 0, (SOCKADDR *)&senderAddr, senderAddrSize);
+					}
+					else if (data == "client_done")
+					{
+						myFile.Close();
+						std::cout << " File successfully sent!\n";
 					}
 					else
 					{
@@ -213,9 +258,9 @@ Server::Server(char argc, char **argv)
 						}
 					}
 				}
-				else if ((ClassTypeID)netBufIn[0] == ClassTypeID::File)
+				else if ((ClassTypeID)netBufIn[0] == ClassTypeID::FileSend)
 				{
-					if (!myFile.is_open())
+					if (!myFile.IsOpen())
 					{
 						continue;
 					}
@@ -223,21 +268,22 @@ Server::Server(char argc, char **argv)
 					CNetMessageFile newMessage;
 					memcpy(&newMessage, &netBufIn, bytesReceived);
 
-					if (myFilePacketsGot > newMessage.myPosition)
+					if (myFile.GetPacketIndex() > newMessage.myPosition)
 					{
 						continue;
 					}
 
 					CNetMessageChatMessage callback;
 					callback.SetMessage("1337_confirm");
-					callback.myPosition = myFilePacketsGot++;
+					callback.myPosition = myFile.IncrementIndex();
 					callback.mySize = newMessage.mySize;
 
-					std::cout << "retrieving " << myFileName << ": (" << (float(min(FILE_BUFLEN * myFilePacketsGot, myTotalFileSize)) / myTotalFileSize) * 100.0f << "%) "
-						<< min(FILE_BUFLEN * myFilePacketsGot, myTotalFileSize) / 1000 << "kb / " << myTotalFileSize / 1000 << "kb             \r";
+					std::cout << "retrieving " << myFile.myFileName << ": (" << (float(min(FILE_BUFLEN * myFile.GetPacketIndex(), myFile.GetTotalFileSize())) / myFile.GetTotalFileSize()) * 100.0f << "%) "
+						<< min(FILE_BUFLEN * myFile.GetPacketIndex(), myFile.GetTotalFileSize()) / 1000 << "kb / " << myFile.GetTotalFileSize() / 1000 << "kb             \r";
 
-					myFile.write(newMessage.myMessage, newMessage.mySize);
-					if (newMessage.mySize < FILE_BUFLEN)
+					myFile.Write(newMessage.myMessage, newMessage.mySize);
+
+					if (newMessage.mySize < FILE_BUFLEN) // done
 					{
 						CNetMessageChatMessage callback;
 						callback.SetMessage("1337_done");
@@ -258,8 +304,6 @@ Server::Server(char argc, char **argv)
 						iSendResult = sendto(myClientSocket, sendBuffer, CHAT_BUFLEN, 0, (SOCKADDR *)&senderAddr, senderAddrSize);
 					}
 				}
-				
-
 			}
 			else if (bytesReceived <= 0)
 				printf("Server: Connection closed with error code : % ld\n", WSAGetLastError());
@@ -272,6 +316,34 @@ Server::Server(char argc, char **argv)
 
 void Server::WriteToFile()
 {
-	myFile.close();						
-	std::cout << "retrieved " << myFileName << "!\n";
+	std::cout << "retrieved " << myFile.myFileName << "!\nfrom " << myFile.myFileIsFrom.first << "!\n";
+
+	myFile.Close();
+	myFile.Open(myFile.myFileName, std::fstream::in | std::fstream::binary);
+
+	EchoToOtherUsers(myFile);
+}
+
+void Server::EchoToOtherUsers(const RecieveFile &aFile)
+{
+	SOCKADDR_IN senderAddr;
+	int senderAddrSize = sizeof(senderAddr);
+	char sendBuffer[CHAT_BUFLEN];
+
+	CNetMessageChatMessage message;
+	message.SetMessage("client_writingfile_" + aFile.myFileName);
+	message.myID = aFile.myFileIsFrom.second;
+	message.mySize = myFile.GetTotalFileSize();
+	
+	memcpy(sendBuffer, &message, sizeof(CNetMessageChatMessage));
+
+	for (int i = 0; i < myAdresses.size(); ++i)
+	{
+		if (myUsers.at(i) == aFile.myFileIsFrom.first)
+		{
+			continue;
+		}
+
+		sendto(myClientSocket, sendBuffer, CHAT_BUFLEN, 0, (SOCKADDR *)&myAdresses[i], senderAddrSize);
+	}
 }

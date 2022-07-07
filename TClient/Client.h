@@ -1,8 +1,8 @@
 #pragma once
 #include "SHARED_DEFINES.h"
 #include <WinSock2.h>
-#include <fstream>
 #include <unordered_map>	
+#include <SharedStuff.h>
 
 void SendBytes(SOCKET aSocket, char *aBuffer, int len);
 BOOL WINAPI OnClose();
@@ -14,6 +14,7 @@ class Client
 public:
 	Client(char argc, char **argv);
 	void Listen();
+	void WriteToFile();
 private:
 	char myID = -1;
 	char myWriteBuffer[DEFAULT_BUFLEN];
@@ -22,8 +23,7 @@ private:
 	std::string myName;
 	std::unordered_map<char, std::string> myUsers;
 
-	std::fstream myFile;
-	int myTotalFileSize = 0;
-	int myPacketIndex = 0;
+	RecieveFile myGetFile;
+	SendFile mySendFile;
 };
 

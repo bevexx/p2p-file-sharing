@@ -1,23 +1,21 @@
 #pragma once
-#include <WinSock2.h>
-#include "SHARED_DEFINES.h"
 #include <unordered_map>
-#include <fstream>
+#include <WinSock2.h>
+#include <SharedStuff.h>
 
 class Server
 {
 public:
 	Server(char argc, char **argv);
+
 	void WriteToFile();
+	void EchoToOtherUsers(const RecieveFile& aFile);
 private:
 	SOCKET myClientSocket = INVALID_SOCKET;
 	std::unordered_map<char, std::string> myUsers;
 	std::vector<SOCKADDR_IN> myAdresses;
 
-	std::fstream myFile;
-	std::filebuf *myFileBuf;
-	std::string myFileName = "";
-	int myTotalFileSize = 0;
-	int myFilePacketsGot = 0;
+	RecieveFile myFile;
+	
 };
 
